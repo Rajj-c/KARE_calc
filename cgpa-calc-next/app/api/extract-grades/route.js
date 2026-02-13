@@ -102,6 +102,11 @@ Rules:
         // Parse the JSON response
         const extractedData = JSON.parse(cleanText);
 
+        // Usage Validation: Ensure structure matches what frontend expects
+        if (!extractedData.semesters || !Array.isArray(extractedData.semesters)) {
+            extractedData.semesters = [];
+        }
+
         return NextResponse.json({
             success: true,
             data: extractedData
