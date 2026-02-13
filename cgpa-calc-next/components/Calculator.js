@@ -11,12 +11,17 @@ import Link from 'next/link';
 
 export default function Calculator() {
     const [activeTab, setActiveTab] = useState('sgpa');
-    const [theme, setTheme] = useState('light');
+    // Dark mode only - removed theme toggle
     const [regulation, setRegulation] = useState('2021');
     const [isSaving, setIsSaving] = useState(false);
     const [showPortfolioLinks, setShowPortfolioLinks] = useState(false);
     const [showTutorial, setShowTutorial] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
+
+    // Grade Card Import State
+    const [isUploading, setIsUploading] = useState(false);
+    const [showPreviewModal, setShowPreviewModal] = useState(false);
+    const [extractedData, setExtractedData] = useState(null);
 
     // Data State
     const [studentName, setStudentName] = useState('');
@@ -60,9 +65,8 @@ export default function Calculator() {
 
         loadData();
 
-        const savedTheme = localStorage.getItem('theme') || 'light';
-        setTheme(savedTheme);
-        document.documentElement.classList.toggle('dark', savedTheme === 'dark');
+        // Force dark mode
+        document.documentElement.classList.add('dark');
 
         // Check if first-time user
         const hasSeenTutorial = localStorage.getItem('hasSeenTutorial');
@@ -224,12 +228,7 @@ export default function Calculator() {
         setCourseCountInput('');
     };
 
-    const toggleTheme = () => {
-        const newTheme = theme === 'light' ? 'dark' : 'light';
-        setTheme(newTheme);
-        localStorage.setItem('theme', newTheme);
-        document.documentElement.classList.toggle('dark', newTheme === 'dark');
-    };
+
 
     const clearData = () => {
         if (confirm('Clear all data?')) {
@@ -244,6 +243,137 @@ export default function Calculator() {
             window.location.reload();
         }
     };
+
+    // Grade Card Import Functions
+    const handleFileUpload = async (event) => {
+        const files = Array.from(event.target.files);
+        if (files.length === 0) return;
+
+        // Validate file types and sizes
+        const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'application/pdf'];
+
+        for (const file of files) {
+            if (!validTypes.includes(file.type)) {
+                alert(`File "${file.name}" is not a valid format. Please upload PNG, JPG, or PDF.`);
+                return;
+            }
+            if (file.size > 5 * 1024 * 1024) {
+                alert(`File "${file.name}" is too large (max 5MB).`);
+                return;
+            }
+        }
+
+        setIsUploading(true);
+
+        try {
+            // Create form data
+            const formData = new FormData();
+            files.forEach(file => {
+                formData.append('file', file);
+            });
+
+            // Call API to extract grades
+            const response = await fetch('/api/extract-grades', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.error || 'Failed to extract grades');
+            }
+
+            if (result.success && result.data) {
+                setExtractedData(result.data);
+                setShowPreviewModal(true);
+            } else {
+                throw new Error('No data extracted from grade card');
+            }
+
+        } catch (error) {
+            console.error('Upload error:', error);
+            alert(error.message || 'Failed to process grade card. Please try again.');
+        } finally {
+            setIsUploading(false);
+            // Reset file input
+            event.target.value = '';
+        }
+    };
+
+    const confirmImport = () => {
+        if (!extractedData) return;
+
+        // Update student name if extracted
+        if (extractedData.studentName) {
+            setStudentName(extractedData.studentName);
+        }
+
+        // Process semesters data
+        if (extractedData.semesters && extractedData.semesters.length > 0) {
+            // For SGPA tab: auto-fill the current working courses
+            const latestSemester = extractedData.semesters[extractedData.semesters.length - 1];
+
+            if (latestSemester.courses && latestSemester.courses.length > 0) {
+                const newCourses = latestSemester.courses.map((course, idx) => ({
+                    id: idx + 1,
+                    name: course.name || '',
+                    credits: String(course.credits || ''),
+                    grade: course.grade || 'S'
+                }));
+                setCourses(newCourses);
+            }
+
+            // For CGPA tab: populate semester history
+            const semesterData = extractedData.semesters.map((sem, idx) => {
+                // Calculate SGPA for this semester
+                let totalPoints = 0;
+                let totalCredits = 0;
+
+                if (sem.courses) {
+                    sem.courses.forEach(course => {
+                        const credits = parseFloat(course.credits) || 0;
+                        const gradePoint = getGradePoint(course.grade, regulation) || 0;
+                        totalPoints += credits * gradePoint;
+                        totalCredits += credits;
+                    });
+                }
+
+                const sgpa = totalCredits > 0 ? (totalPoints / totalCredits).toFixed(2) : '0.00';
+
+                return {
+                    id: Date.now() + idx,
+                    credits: String(totalCredits),
+                    sgpa: sgpa,
+                    courses: sem.courses || []
+                };
+            });
+
+            // Add to semester history (don't replace, append)
+            setSemesters(prev => {
+                // Filter out empty semesters
+                const nonEmpty = prev.filter(s => s.credits || s.sgpa);
+                return [...nonEmpty, ...semesterData];
+            });
+        }
+
+        // Close modal and show success message
+        setShowPreviewModal(false);
+        setExtractedData(null);
+
+        const semesterCount = extractedData.semesters?.length || 0;
+        const courseCount = extractedData.semesters?.reduce(
+            (sum, sem) => sum + (sem.courses?.length || 0), 0
+        ) || 0;
+
+        alert(`✅ Successfully imported ${courseCount} courses from ${semesterCount} semester(s)!`);
+    };
+
+    const cancelImport = () => {
+        setShowPreviewModal(false);
+        setExtractedData(null);
+    };
+
 
     const performUndo = () => {
         if (undoHistory.length === 0) {
@@ -481,10 +611,24 @@ export default function Calculator() {
         const pageCount = doc.internal.getNumberOfPages();
         for (let i = 1; i <= pageCount; i++) {
             doc.setPage(i);
+            // 1. Branding (Center)
+            doc.font = "helvetica";
             doc.setFontSize(8);
             doc.setTextColor(150);
-            doc.text(`Page ${i} of ${pageCount}`, 105, 285, { align: 'center' });
-            doc.text('Generated by KARE CGPA Calculator', 105, 290, { align: 'center' });
+            doc.text(`Page ${i} of ${pageCount}`, 105, 282, { align: 'center' });
+            doc.text("Generated by Raj's KARE CGPA Calculator", 105, 287, { align: 'center' });
+
+            // 2. Portfolio Link (Right Bottom)
+            doc.setTextColor(0, 102, 204); // Blue link
+            doc.setFontSize(8);
+            const linkText = "rajeswar.tech";
+            // Align right at x=200
+            doc.text(linkText, 200, 287, { align: 'right' });
+
+            // Add clickable link area
+            const linkWidth = doc.getTextWidth(linkText);
+            // x = 200 - width (since right aligned)
+            doc.link(200 - linkWidth, 287 - 3, linkWidth, 4, { url: 'https://rajeswar.tech' });
         }
 
         doc.save(`Grade_Report_${regNo}_${new Date().toLocaleDateString().replace(/\//g, '-')}.pdf`);
@@ -500,47 +644,13 @@ export default function Calculator() {
     ].filter(d => d.sgpa > 0);
 
     return (
-        <div className={`min-h-screen p-4 sm:p-8 transition-colors duration-300 font-sans relative overflow-hidden ${theme === 'dark' ? 'bg-slate-900 text-white' : 'bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50 text-gray-800'}`}>
+        <div className="min-h-screen p-4 sm:p-8 transition-colors duration-300 font-sans relative overflow-hidden bg-slate-900 text-white">
 
-            {/* Animated Background Elements - Only in Light Mode */}
-            {theme === 'light' && (
-                <div className="fixed inset-0 pointer-events-none overflow-hidden">
-                    {/* Floating Math Symbols */}
-                    {[
-                        { symbol: '+', delay: '0s', duration: '20s', left: '10%', size: 'text-6xl' },
-                        { symbol: '×', delay: '2s', duration: '25s', left: '20%', size: 'text-5xl' },
-                        { symbol: '÷', delay: '4s', duration: '22s', left: '80%', size: 'text-6xl' },
-                        { symbol: '=', delay: '1s', duration: '18s', left: '70%', size: 'text-5xl' },
-                        { symbol: '∑', delay: '3s', duration: '24s', left: '15%', size: 'text-7xl' },
-                        { symbol: '√', delay: '5s', duration: '21s', left: '85%', size: 'text-6xl' },
-                        { symbol: '∞', delay: '2.5s', duration: '19s', left: '50%', size: 'text-5xl' },
-                        { symbol: 'π', delay: '4.5s', duration: '23s', left: '30%', size: 'text-6xl' },
-                        { symbol: '8', delay: '1.5s', duration: '26s', left: '60%', size: 'text-7xl' },
-                        { symbol: '9', delay: '3.5s', duration: '20s', left: '40%', size: 'text-6xl' },
-                        { symbol: '10', delay: '0.5s', duration: '27s', left: '90%', size: 'text-5xl' },
-                    ].map((item, i) => (
-                        <div
-                            key={i}
-                            className={`absolute ${item.size} font-bold opacity-[0.06] select-none`}
-                            style={{
-                                left: item.left,
-                                animation: `float ${item.duration} ease-in-out infinite`,
-                                animationDelay: item.delay,
-                                color: i % 3 === 0 ? '#3b82f6' : i % 3 === 1 ? '#a855f7' : '#ec4899',
-                            }}
-                        >
-                            {item.symbol}
-                        </div>
-                    ))}
-                </div>
-            )}
 
-            {/* Header & Theme Toggle */}
+
+            {/* Header */}
             <div className="max-w-3xl mx-auto text-center mb-12 relative animate-in fade-in slide-in-from-top-4 duration-700">
-                <div className="absolute top-0 right-0 flex gap-2">
-                    <button onClick={toggleTheme} className="p-3 rounded-full bg-white/20 backdrop-blur border border-white/30 hover:scale-110 transition shadow-sm">
-                        {theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}
-                    </button>
+                <div className="absolute top-0 right-0">
                     <button
                         onClick={() => setShowTutorial(true)}
                         className="p-3 rounded-full bg-white/20 backdrop-blur border border-white/30 hover:scale-110 transition shadow-sm"
@@ -550,11 +660,11 @@ export default function Calculator() {
                     </button>
                 </div>
 
-                <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 mb-6 shadow-inner">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-900/30 text-blue-400 mb-6 shadow-inner">
                     <Info size={32} strokeWidth={2.5} />
                 </div>
 
-                <h1 className="text-4xl md:text-5xl font-black mb-2 tracking-tight bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 dark:from-white dark:via-gray-100 dark:to-gray-200 bg-clip-text text-transparent">
+                <h1 className="text-4xl md:text-5xl font-black mb-2 tracking-tight text-white">
                     KARE CGPA & SGPA Calculator
                 </h1>
 
@@ -635,13 +745,16 @@ export default function Calculator() {
                                 <label className="text-xs font-bold uppercase tracking-wider opacity-70">Reg No</label>
                                 <input type="text" value={regNo} onChange={(e) => setRegNo(e.target.value)} className="w-full mt-1 p-2 rounded-lg bg-white/50 dark:bg-slate-700/50 border border-white/30 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="992xxxxxxxx" />
                             </div>
+
+                            {/* Import Grade Card Button */}
+
                         </div>
 
                         <div className="text-center p-4 bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-xl border border-blue-500/20">
                             <div className="text-xs font-bold uppercase opacity-60">Current CGPA</div>
-                            <div key={calculatedCgpa} className="text-5xl font-black text-blue-600 dark:text-blue-400 my-2 animate-in zoom-in duration-300">{calculatedCgpa}</div>
+                            <div key="cgpa-display" className="text-5xl font-black text-blue-600 dark:text-blue-400 my-2 animate-in zoom-in duration-300">{calculatedCgpa}</div>
                             <div className="text-xs font-bold uppercase opacity-60">SGPA via Courses</div>
-                            <div key={calculatedSgpa} className="text-2xl font-bold text-purple-600 dark:text-purple-400 animate-in zoom-in duration-300">{calculatedSgpa}</div>
+                            <div key="sgpa-display" className="text-2xl font-bold text-purple-600 dark:text-purple-400 animate-in zoom-in duration-300">{calculatedSgpa}</div>
                         </div>
 
                         {/* Statistics Dashboard */}
@@ -898,6 +1011,35 @@ export default function Calculator() {
                                     </button>
                                 </div>
 
+                                {/* Import Grade Card Button (Moved Here) */}
+                                <div className="mt-4 pt-4 border-t border-white/20">
+                                    <div className="relative">
+                                        <input
+                                            type="file"
+                                            id="gradeCardUpload"
+                                            accept="image/png,image/jpeg,image/jpg,application/pdf"
+                                            onChange={handleFileUpload}
+                                            className="hidden"
+                                            disabled={isUploading}
+                                            multiple
+                                        />
+                                        <label
+                                            htmlFor="gradeCardUpload"
+                                            className={`flex items-center justify-center gap-2 p-3 rounded-lg font-bold transition-all cursor-pointer ${isUploading
+                                                ? 'bg-gray-400 cursor-not-allowed'
+                                                : 'bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95'
+                                                }`}
+                                        >
+                                            <Upload size={20} />
+                                            {isUploading ? 'Processing...' : '📄 Import Grade Card(s) (AI)'}
+                                        </label>
+                                        <p className="text-xs text-center mt-2 opacity-60">
+                                            Have a <strong>PDF</strong> or multiple screenshots? <br />
+                                            <span className="font-bold text-purple-600 dark:text-purple-400">Select all files at once!</span>
+                                        </p>
+                                    </div>
+                                </div>
+
                                 {/* Semester History in SGPA Tab */}
                                 {semesters.some(s => s.credits || s.sgpa) && (
                                     <div className="mt-6">
@@ -927,7 +1069,7 @@ export default function Calculator() {
                                                         onClick={() => loadSemesterForEdit(sem)}
                                                         className={`flex justify-between items-center p-3 rounded-lg text-sm shadow-sm transition cursor-pointer border ${editingSemesterId === sem.id ? 'bg-orange-50 dark:bg-orange-900/20 border-orange-300 dark:border-orange-700' : 'bg-white/50 dark:bg-slate-700/50 border-white/10 hover:bg-white/60 dark:hover:bg-slate-700/60'}`}
                                                     >
-                                                        <span className="font-bold text-slate-700 dark:text-slate-300">Semester {i + 1} {editingSemesterId === sem.id && <span className="text-[10px] text-orange-600 bg-orange-100 px-1 rounded ml-2">EDITING</span>}</span>
+                                                        <span className="font-bold text-slate-700 dark:text-slate-300">Semester {idx + 1} {editingSemesterId === sem.id && <span className="text-[10px] text-orange-600 bg-orange-100 px-1 rounded ml-2">EDITING</span>}</span>
                                                         <div className="flex gap-4 items-center">
                                                             <span className="text-slate-500 dark:text-slate-400">Cr: <strong className="text-slate-800 dark:text-slate-200">{sem.credits}</strong></span>
                                                             <span className="text-slate-500 dark:text-slate-400">SGPA: <strong className="text-blue-600 dark:text-blue-400">{sem.sgpa}</strong></span>
@@ -1116,6 +1258,112 @@ export default function Calculator() {
                     </p>
                 </div>
             </div >
+
+            {/* Grade Card Preview Modal */}
+            {
+                showPreviewModal && extractedData && (
+                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
+                        <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto animate-in zoom-in duration-300 flex flex-col">
+                            <div className="sticky top-0 bg-gradient-to-r from-purple-600 to-blue-600 text-white p-6 rounded-t-2xl flex justify-between items-center z-10">
+                                <div>
+                                    <h2 className="text-2xl font-black">Grade Card Data Extracted ✨</h2>
+                                    <p className="text-sm opacity-90 mt-1">Review the data before importing</p>
+                                </div>
+                                <button onClick={cancelImport} className="p-2 hover:bg-white/20 rounded-full transition">
+                                    <Trash2 size={20} />
+                                </button>
+                            </div>
+
+                            <div className="p-6 space-y-6 overflow-y-auto">
+                                {/* Student Info */}
+                                {extractedData.studentName && (
+                                    <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl border border-blue-200 dark:border-blue-800">
+                                        <h3 className="font-bold text-blue-800 dark:text-blue-300 text-sm uppercase tracking-wider mb-1">Student Details</h3>
+                                        <div className="text-lg font-bold">{extractedData.studentName}</div>
+                                    </div>
+                                )}
+
+                                {/* Semesters & Courses */}
+                                <div className="space-y-6">
+                                    <h3 className="font-bold text-slate-700 dark:text-gray-300 text-lg border-b pb-2">Extracted Courses</h3>
+
+                                    {extractedData.semesters?.map((sem, semIdx) => (
+                                        <div key={semIdx} className="space-y-3">
+                                            <div className="flex items-center gap-2">
+                                                <div className="bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 font-bold px-3 py-1 rounded-full text-sm">
+                                                    Semester {sem.semester}
+                                                </div>
+                                                <div className="text-sm opacity-60">
+                                                    {sem.courses?.length || 0} Courses
+                                                </div>
+                                            </div>
+
+                                            <div className="overflow-x-auto">
+                                                <table className="w-full text-sm text-left">
+                                                    <thead className="bg-slate-100 dark:bg-slate-700 text-xs uppercase font-bold text-slate-500 dark:text-slate-400">
+                                                        <tr>
+                                                            <th className="px-4 py-2 rounded-l-lg">Code</th>
+                                                            <th className="px-4 py-2">Course Name</th>
+                                                            <th className="px-4 py-2">Credits</th>
+                                                            <th className="px-4 py-2 rounded-r-lg">Grade</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                                                        {sem.courses?.map((course, idx) => (
+                                                            <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-700/50">
+                                                                <td className="px-4 py-2 font-mono text-xs opacity-70">{course.code}</td>
+                                                                <td className="px-4 py-2 font-medium">{course.name}</td>
+                                                                <td className="px-4 py-2">{course.credits}</td>
+                                                                <td className="px-4 py-2 font-bold text-purple-600 dark:text-purple-400">{course.grade}</td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Summary */}
+                                {extractedData.totalCGPA && (
+                                    <div className="flex justify-end">
+                                        <div className="bg-green-100 dark:bg-green-900/30 px-6 py-4 rounded-xl border border-green-200 dark:border-green-800 text-center">
+                                            <div className="text-xs font-bold uppercase text-green-700 dark:text-green-400 tracking-wider">Detected CGPA</div>
+                                            <div className="text-3xl font-black text-green-800 dark:text-green-300">{extractedData.totalCGPA}</div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Verification Note */}
+                            <div className="mx-6 mb-2 p-4 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-xl flex items-start gap-3">
+                                <AlertTriangle className="text-orange-600 dark:text-orange-400 shrink-0 mt-0.5" size={18} />
+                                <div className="text-sm text-orange-800 dark:text-orange-200">
+                                    <strong>Important:</strong> Please verify all course codes, credits, and grades above.
+                                    <br />
+                                    If any data is incorrect, you can <strong>edit it in the calculator</strong> after importing, before downloading your report.
+                                </div>
+                            </div>
+
+                            <div className="p-6 border-t dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 rounded-b-2xl flex gap-4">
+                                <button
+                                    onClick={cancelImport}
+                                    className="flex-1 py-3 bg-white dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 text-slate-700 dark:text-gray-200 rounded-xl font-bold shadow-sm border border-slate-200 dark:border-slate-600 transition"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={confirmImport}
+                                    className="flex-1 py-3 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white rounded-xl font-bold shadow-lg transform transition active:scale-95 flex items-center justify-center gap-2"
+                                >
+                                    <Save size={20} />
+                                    Import Data
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
 
             {/* Tutorial Modal */}
             {
