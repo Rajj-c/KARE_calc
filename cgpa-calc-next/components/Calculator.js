@@ -6,7 +6,7 @@ import { getGradePoint, getGradeOptions, getRegulationDetails } from '../utils/g
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Trash2, Plus, Download, Moon, Sun, Save, Info, Upload, FileDown } from 'lucide-react';
+import { Trash2, Plus, Download, Moon, Sun, Save, Info, Upload, FileDown, AlertTriangle } from 'lucide-react';
 import Link from 'next/link';
 
 export default function Calculator() {
