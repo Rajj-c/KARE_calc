@@ -1,13 +1,14 @@
 
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { getGradePoint, getGradeOptions, getRegulationDetails } from '../utils/gradingLogic';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Trash2, Plus, Download, Moon, Sun, Save, Info, Upload, FileDown, AlertTriangle } from 'lucide-react';
 import Link from 'next/link';
+import html2canvas from 'html2canvas';
 
 export default function Calculator() {
     const [activeTab, setActiveTab] = useState('sgpa');
@@ -37,6 +38,9 @@ export default function Calculator() {
     // Undo Feature
     const [undoHistory, setUndoHistory] = useState([]);
 
+    // PDF Chart Reference
+    const chartRef = useRef(null);
+
     // Target CGPA Calculator State
     const [targetCgpa, setTargetCgpa] = useState('');
     const [remainingSemesters, setRemainingSemesters] = useState('');
@@ -46,6 +50,7 @@ export default function Calculator() {
     // Results
     const [calculatedSgpa, setCalculatedSgpa] = useState('0.00');
     const [calculatedCgpa, setCalculatedCgpa] = useState('0.00');
+
 
     // Load Data
     useEffect(() => {
@@ -244,136 +249,6 @@ export default function Calculator() {
         }
     };
 
-    // Grade Card Import Functions
-    const handleFileUpload = async (event) => {
-        const files = Array.from(event.target.files);
-        if (files.length === 0) return;
-
-        // Validate file types and sizes
-        const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'application/pdf'];
-
-        for (const file of files) {
-            if (!validTypes.includes(file.type)) {
-                alert(`File "${file.name}" is not a valid format. Please upload PNG, JPG, or PDF.`);
-                return;
-            }
-            if (file.size > 5 * 1024 * 1024) {
-                alert(`File "${file.name}" is too large (max 5MB).`);
-                return;
-            }
-        }
-
-        setIsUploading(true);
-
-        try {
-            // Create form data
-            const formData = new FormData();
-            files.forEach(file => {
-                formData.append('file', file);
-            });
-
-            // Call API to extract grades
-            const response = await fetch('/api/extract-grades', {
-                method: 'POST',
-                body: formData
-            });
-
-            const result = await response.json();
-
-            if (!response.ok) {
-                throw new Error(result.error || 'Failed to extract grades');
-            }
-
-            if (result.success && result.data) {
-                setExtractedData(result.data);
-                setShowPreviewModal(true);
-            } else {
-                throw new Error('No data extracted from grade card');
-            }
-
-        } catch (error) {
-            console.error('Upload error:', error);
-            alert(error.message || 'Failed to process grade card. Please try again.');
-        } finally {
-            setIsUploading(false);
-            // Reset file input
-            event.target.value = '';
-        }
-    };
-
-    const confirmImport = () => {
-        if (!extractedData) return;
-
-        // Update student name if extracted
-        if (extractedData.studentName) {
-            setStudentName(extractedData.studentName);
-        }
-
-        // Process semesters data
-        if (extractedData.semesters && extractedData.semesters.length > 0) {
-            // For SGPA tab: auto-fill the current working courses
-            const latestSemester = extractedData.semesters[extractedData.semesters.length - 1];
-
-            if (latestSemester.courses && latestSemester.courses.length > 0) {
-                const newCourses = latestSemester.courses.map((course, idx) => ({
-                    id: idx + 1,
-                    name: course.name || '',
-                    credits: String(course.credits || ''),
-                    grade: course.grade || 'S'
-                }));
-                setCourses(newCourses);
-            }
-
-            // For CGPA tab: populate semester history
-            const semesterData = extractedData.semesters.map((sem, idx) => {
-                // Calculate SGPA for this semester
-                let totalPoints = 0;
-                let totalCredits = 0;
-
-                if (sem.courses) {
-                    sem.courses.forEach(course => {
-                        const credits = parseFloat(course.credits) || 0;
-                        const gradePoint = getGradePoint(course.grade, regulation) || 0;
-                        totalPoints += credits * gradePoint;
-                        totalCredits += credits;
-                    });
-                }
-
-                const sgpa = totalCredits > 0 ? (totalPoints / totalCredits).toFixed(2) : '0.00';
-
-                return {
-                    id: Date.now() + idx,
-                    credits: String(totalCredits),
-                    sgpa: sgpa,
-                    courses: sem.courses || []
-                };
-            });
-
-            // Add to semester history (don't replace, append)
-            setSemesters(prev => {
-                // Filter out empty semesters
-                const nonEmpty = prev.filter(s => s.credits || s.sgpa);
-                return [...nonEmpty, ...semesterData];
-            });
-        }
-
-        // Close modal and show success message
-        setShowPreviewModal(false);
-        setExtractedData(null);
-
-        const semesterCount = extractedData.semesters?.length || 0;
-        const courseCount = extractedData.semesters?.reduce(
-            (sum, sem) => sum + (sem.courses?.length || 0), 0
-        ) || 0;
-
-        alert(`✅ Successfully imported ${courseCount} courses from ${semesterCount} semester(s)!`);
-    };
-
-    const cancelImport = () => {
-        setShowPreviewModal(false);
-        setExtractedData(null);
-    };
-
 
     const performUndo = () => {
         if (undoHistory.length === 0) {
@@ -494,7 +369,108 @@ export default function Calculator() {
         event.target.value = '';
     };
 
-    const generatePDF = () => {
+    const cancelImport = () => {
+        setShowPreviewModal(false);
+        setExtractedData(null);
+    };
+
+    const confirmImport = () => {
+        if (!extractedData) return;
+
+        // Save current state for undo
+        setUndoHistory([...undoHistory, {
+            type: 'CLEAR_DATA', // Treating import like a clear + replace
+            data: { semesters, courses, studentName, regNo, prevCgpa, prevCredits },
+            timestamp: Date.now()
+        }].slice(-10));
+
+        setStudentName(extractedData.studentName || studentName);
+
+        if (extractedData.semesters && extractedData.semesters.length > 0) {
+            // First semester goes to active courses edit window
+            // The rest go to semester history
+
+            const firstSem = extractedData.semesters[0];
+            const remainingSems = extractedData.semesters.slice(1);
+
+            setCourses(firstSem.courses.map((c, i) => ({
+                id: Date.now() + i,
+                code: c.code || '',
+                name: c.name,
+                credits: c.credits,
+                grade: c.grade
+            })));
+
+            setEditingSemesterId(firstSem.semester || Date.now());
+            setSemesters(remainingSems.map((sem, i) => {
+                // Calculate SGPA for this historical semester
+                let pts = 0; let creds = 0;
+                sem.courses.forEach(c => {
+                    pts += c.credits * getGradePoint(c.grade, regulation);
+                    creds += c.credits;
+                });
+
+                return {
+                    id: Date.now() + 100 + i,
+                    credits: creds,
+                    sgpa: creds > 0 ? (pts / creds).toFixed(2) : 0,
+                    courses: sem.courses.map((c, j) => ({
+                        id: Date.now() + 200 + j,
+                        code: c.code || '',
+                        name: c.name,
+                        credits: c.credits,
+                        grade: c.grade
+                    }))
+                };
+            }));
+        }
+
+        setShowPreviewModal(false);
+        setExtractedData(null);
+        alert('Data imported from image successfully!');
+    };
+
+    const handleFileUpload = async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        // Ensure it's an image
+        if (!file.type.startsWith('image/')) {
+            alert('Please upload a valid image file (PNG/JPG)');
+            return;
+        }
+
+        setIsUploading(true);
+
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const response = await fetch('/api/parse-grade-card', {
+                method: 'POST',
+                body: formData,
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.error || 'Failed to parse grade card');
+            }
+
+            setExtractedData(result.data);
+            setShowPreviewModal(true);
+
+        } catch (error) {
+            console.error('Upload Error:', error);
+            alert(`Error: ${error.message}`);
+        } finally {
+            setIsUploading(false);
+            // Reset input
+            event.target.value = '';
+        }
+    };
+
+    const generatePDF = async () => {
         if (!studentName || !regNo) {
             alert("Please enter your Name and Register Number to download the report.");
             return;
@@ -546,6 +522,36 @@ export default function Calculator() {
         doc.text(`Total Semesters: ${validSems.length} | Total Credits: ${totalCredits} | Avg SGPA: ${avgSgpa}`, 105, yPos, { align: 'center' });
 
         yPos += 15;
+
+        // Capture Chart as Image and Add to PDF
+        if (chartRef.current && chartData.length > 0) {
+            try {
+                // Find the original width to render the chart neatly
+                const canvas = await html2canvas(chartRef.current, {
+                    scale: 2, // High resolution
+                    backgroundColor: '#0b131f' // Explicit dark background
+                });
+                const imgData = canvas.toDataURL('image/png');
+
+                // Calculate maintaining aspect ratio 
+                // PDF page width is 210mm. If margins are 20mm each side, available width is 170mm
+                const pdfWidth = 170;
+                const imgProps = doc.getImageProperties(imgData);
+                const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+
+                doc.addImage(imgData, 'PNG', 20, yPos, pdfWidth, pdfHeight);
+                yPos += pdfHeight + 15; // Move cursor down below the image
+            } catch (error) {
+                console.error("Error generating chart image for PDF:", error);
+                // Fallback: Continue without chart if it fails
+            }
+        }
+
+        // Check if we need a new page before starting the summary table
+        if (yPos > 240) {
+            doc.addPage();
+            yPos = 20;
+        }
 
         // Semester Summary Table
         doc.setFontSize(12);
@@ -689,10 +695,10 @@ export default function Calculator() {
                     )}
                 </p>
 
-                <div className="flex flex-wrap justify-center gap-4 mb-8">
+                <div className="flex flex-wrap justify-center gap-2 sm:gap-4 mb-8">
                     <button
                         onClick={() => setActiveTab('sgpa')}
-                        className={`px-8 py-3 rounded-xl font-bold text-lg shadow-lg transition-transform hover:scale-105 active:scale-95 ${activeTab === 'sgpa'
+                        className={`px-4 py-2 sm:px-8 sm:py-3 rounded-xl font-bold text-sm sm:text-lg shadow-lg transition-transform hover:scale-105 active:scale-95 ${activeTab === 'sgpa'
                             ? 'bg-purple-600 text-white ring-4 ring-purple-600/20'
                             : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-gray-50'
                             }`}
@@ -701,7 +707,7 @@ export default function Calculator() {
                     </button>
                     <button
                         onClick={() => setActiveTab('cgpa')}
-                        className={`px-8 py-3 rounded-xl font-bold text-lg shadow-lg transition-transform hover:scale-105 active:scale-95 ${activeTab === 'cgpa'
+                        className={`px-4 py-2 sm:px-8 sm:py-3 rounded-xl font-bold text-sm sm:text-lg shadow-lg transition-transform hover:scale-105 active:scale-95 ${activeTab === 'cgpa'
                             ? 'bg-blue-500 text-white ring-4 ring-blue-500/20'
                             : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-gray-50'
                             }`}
@@ -710,7 +716,7 @@ export default function Calculator() {
                     </button>
                     <button
                         onClick={() => setActiveTab('target')}
-                        className={`px-8 py-3 rounded-xl font-bold text-lg shadow-lg transition-transform hover:scale-105 active:scale-95 ${activeTab === 'target'
+                        className={`px-4 py-2 sm:px-8 sm:py-3 rounded-xl font-bold text-sm sm:text-lg shadow-lg transition-transform hover:scale-105 active:scale-95 ${activeTab === 'target'
                             ? 'bg-green-600 text-white ring-4 ring-green-600/20'
                             : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-gray-50'
                             }`}
@@ -730,7 +736,7 @@ export default function Calculator() {
                 </div>
             </div>
 
-            <div className="max-w-4xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="max-w-4xl mx-auto flex flex-col-reverse lg:grid lg:grid-cols-3 gap-8">
 
                 {/* Sidebar: Profile & Stats */}
                 <div className="lg:col-span-1 space-y-6">
@@ -747,7 +753,25 @@ export default function Calculator() {
                             </div>
 
                             {/* Import Grade Card Button */}
-
+                            <div className="pt-2">
+                                <label className="relative flex flex-col items-center justify-center w-full py-4 border-2 border-dashed border-blue-300 dark:border-blue-700 rounded-xl cursor-pointer bg-blue-50/50 dark:bg-blue-900/10 hover:bg-blue-100 dark:hover:bg-blue-900/30 transition shadow-sm overflow-hidden group">
+                                    {isUploading ? (
+                                        <div className="flex flex-col items-center">
+                                            <Loader2 className="animate-spin text-blue-600 dark:text-blue-400 mb-2" size={24} />
+                                            <span className="text-sm font-bold text-blue-800 dark:text-blue-300">Processing with Gemini AI...</span>
+                                        </div>
+                                    ) : (
+                                        <div className="flex flex-col items-center">
+                                            <div className="w-10 h-10 bg-blue-100 dark:bg-blue-800 text-blue-600 dark:text-blue-300 rounded-full flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+                                                <Upload size={20} />
+                                            </div>
+                                            <span className="text-sm font-bold text-blue-800 dark:text-blue-300">Auto-Fill: Upload Grade Card</span>
+                                            <span className="text-xs opacity-60 text-center mt-1 px-4">Screenshot from SIS portal (PNG/JPG)</span>
+                                        </div>
+                                    )}
+                                    <input type="file" accept="image/*" onChange={handleFileUpload} disabled={isUploading} className="hidden" />
+                                </label>
+                            </div>
                         </div>
 
                         <div className="text-center p-4 bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-xl border border-blue-500/20">
@@ -895,49 +919,16 @@ export default function Calculator() {
                 </div>
 
                 {/* Main Content */}
-                <div className="lg:col-span-2 space-y-6">
-
-                    {/* Chart */}
-                    <div className="backdrop-blur-md bg-white/30 border border-white/20 shadow-lg p-6 rounded-2xl bg-white/40 dark:bg-slate-800/50 backdrop-blur-lg border border-white/30 shadow-xl">
-                        <h3 className="font-bold text-lg mb-4 opacity-80">Performance Trend</h3>
-                        <div className="h-48 w-full">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <AreaChart data={chartData}>
-                                    <defs>
-                                        <linearGradient id="colorSgpa" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="5%" stopColor="#2563eb" stopOpacity={0.3} />
-                                            <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
-                                        </linearGradient>
-                                    </defs>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.1} />
-                                    <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} dy={10} />
-                                    <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} domain={[0, 10]} dx={-10} />
-                                    <Tooltip
-                                        contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.8)', borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                                        cursor={{ stroke: '#2563eb', strokeWidth: 1, strokeDasharray: '4 4' }}
-                                    />
-                                    <Area
-                                        type="monotone"
-                                        dataKey="sgpa"
-                                        stroke="#2563eb"
-                                        strokeWidth={3}
-                                        fillOpacity={1}
-                                        fill="url(#colorSgpa)"
-                                        activeDot={{ r: 6, stroke: 'white', strokeWidth: 2 }}
-                                    />
-                                </AreaChart>
-                            </ResponsiveContainer>
-                        </div>
-                    </div>
+                <div className="lg:col-span-2 flex flex-col gap-6">
 
                     {/* Calculator Tabs */}
-                    <div className="backdrop-blur-md bg-white/30 border border-white/20 shadow-lg p-6 rounded-2xl bg-white/40 dark:bg-slate-800/50 backdrop-blur-lg border border-white/30 shadow-xl">
+                    <div id="sgpa-calculator-form" className="backdrop-blur-md bg-white/30 border border-white/20 shadow-lg p-6 rounded-2xl bg-white/40 dark:bg-slate-800/50 backdrop-blur-lg border border-white/30 shadow-xl scroll-mt-6">
 
 
                         {activeTab === 'sgpa' && (
                             <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                                <div className="flex justify-between items-center mb-4 bg-purple-50 dark:bg-purple-900/10 p-3 rounded-xl border border-purple-100 dark:border-purple-800/30">
-                                    <div className="flex items-center gap-3">
+                                <div className="flex flex-col sm:flex-row justify-between items-center mb-4 bg-purple-50 dark:bg-purple-900/10 p-3 rounded-xl border border-purple-100 dark:border-purple-800/30 gap-3 sm:gap-0">
+                                    <div className="flex items-center justify-between w-full sm:w-auto gap-3">
                                         <label className="text-xs font-bold uppercase opacity-60">Set No. of Courses:</label>
                                         <input
                                             type="number"
@@ -949,7 +940,7 @@ export default function Calculator() {
                                             placeholder="#"
                                         />
                                     </div>
-                                    <button onClick={addCourse} className="text-xs bg-purple-600 text-white px-3 py-1.5 rounded-full font-bold hover:bg-purple-700 transition shadow-sm">+ Add Single</button>
+                                    <button onClick={addCourse} className="w-full sm:w-auto text-xs bg-purple-600 text-white px-3 py-2 sm:py-1.5 rounded-full font-bold hover:bg-purple-700 transition shadow-sm">+ Add Single</button>
                                 </div>
                                 <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
                                     {courses.length === 0 ? (
@@ -1237,8 +1228,59 @@ export default function Calculator() {
                                 </div>
                             </div>
                         )}
-
                     </div>
+
+                    {/* Chart */}
+                    <div className="bg-[#0b131f] border border-gray-800 shadow-2xl p-6 rounded-2xl overflow-hidden relative">
+                        {/* Background radial glow */}
+                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[120%] h-[120%] bg-[radial-gradient(circle,rgba(6,182,212,0.05)_0%,transparent_70%)] pointer-events-none"></div>
+
+                        <h3 className="text-gray-200 text-lg font-medium mb-6 relative z-10">Performance Trend</h3>
+                        <div className="h-64 w-full relative z-10" ref={chartRef}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <AreaChart data={chartData} margin={{ top: 15, right: 10, left: -20, bottom: 0 }}>
+                                    <defs>
+                                        <linearGradient id="colorCyan" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0%" stopColor="#06b6d4" stopOpacity={0.6} />
+                                            <stop offset="80%" stopColor="#06b6d4" stopOpacity={0} />
+                                        </linearGradient>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="0" vertical={false} stroke="#1e293b" opacity={0.6} />
+                                    <XAxis
+                                        dataKey="name"
+                                        stroke="#64748b"
+                                        fontSize={10}
+                                        tickLine={false}
+                                        axisLine={{ stroke: '#06b6d4', strokeWidth: 1 }}
+                                        dy={10}
+                                    />
+                                    <YAxis
+                                        stroke="#64748b"
+                                        fontSize={10}
+                                        tickLine={false}
+                                        axisLine={{ stroke: '#06b6d4', strokeWidth: 1 }}
+                                        domain={[0, 10]}
+                                    />
+                                    <Tooltip
+                                        contentStyle={{ backgroundColor: '#0f172a', borderRadius: '8px', border: '1px solid #1e293b', color: '#fff', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
+                                        cursor={{ stroke: '#06b6d4', strokeWidth: 1, strokeDasharray: '4 4' }}
+                                        itemStyle={{ color: '#06b6d4', fontWeight: 'bold' }}
+                                    />
+                                    <Area
+                                        type="linear"
+                                        dataKey="sgpa"
+                                        stroke="#06b6d4"
+                                        strokeWidth={2}
+                                        fillOpacity={1}
+                                        fill="url(#colorCyan)"
+                                        activeDot={{ r: 6, fill: '#06b6d4', stroke: '#0b131f', strokeWidth: 2 }}
+                                        dot={{ r: 4, fill: '#06b6d4', strokeWidth: 0 }}
+                                    />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+
                 </div>
             </div >
 
