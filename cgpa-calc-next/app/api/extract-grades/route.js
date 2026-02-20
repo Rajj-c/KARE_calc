@@ -109,23 +109,32 @@ Rules:
 
         return NextResponse.json({
             success: true,
-            data: extractedData
+            data: extractedData,
+            method: 'gemini'
         });
 
     } catch (error) {
         console.error('Error extracting grades:', error);
 
         let errorMessage = 'Failed to extract grades from the image';
+        let suggestion = 'Try the PDF Upload or OCR method as alternatives';
+
         if (error.message.includes('API key')) {
             errorMessage = 'Invalid API key. Please check your Google AI API key.';
-        } else if (error.message.includes('quota')) {
-            errorMessage = 'API quota exceeded. Please try again later.';
+        } else if (error.message.includes('quota') || error.message.includes('429') || error.message.includes('RESOURCE_EXHAUSTED')) {
+            errorMessage = '⚠️ Gemini API quota exceeded. Please try the PDF Upload or OCR Upload method instead.';
+            suggestion = 'The PDF and OCR methods work offline and have no quota limits';
         } else if (error instanceof SyntaxError) {
             errorMessage = 'Failed to parse grade card. The image might be unclear.';
+            suggestion = 'Try uploading a clearer image or use the OCR method';
         }
 
         return NextResponse.json(
-            { error: errorMessage, details: error.message },
+            {
+                error: errorMessage,
+                details: error.message,
+                suggestion: suggestion
+            },
             { status: 500 }
         );
     }

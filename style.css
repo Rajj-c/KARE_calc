@@ -1,0 +1,132 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
+
+:root {
+    --bg-primary: #f0f9ff;
+    --bg-secondary: #e0f2fe;
+    --text-primary: #1f2937;
+    --text-secondary: #4b5563;
+    --glass-bg: rgba(255, 255, 255, 0.7);
+    --glass-border: rgba(255, 255, 255, 0.5);
+    --input-bg: rgba(255, 255, 255, 0.9);
+    --card-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+    --accent-color: #2563eb;
+}
+
+[data-theme="dark"] {
+    --bg-primary: #0f172a;
+    --bg-secondary: #1e293b;
+    --text-primary: #f3f4f6;
+    --text-secondary: #9ca3af;
+    --glass-bg: rgba(30, 41, 59, 0.7);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --input-bg: rgba(51, 65, 85, 0.8);
+    --card-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+    --accent-color: #60a5fa;
+}
+
+body {
+    font-family: 'Outfit', sans-serif;
+    background: linear-gradient(135deg, var(--bg-primary), var(--bg-secondary));
+    color: var(--text-primary);
+    min-height: 100vh;
+    transition: background 0.3s ease, color 0.3s ease;
+}
+
+.glass-panel {
+    background: var(--glass-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--card-shadow);
+}
+
+.input-field {
+    @apply w-full p-3 rounded-lg border focus:ring-2 focus:ring-blue-500 bg-opacity-50 transition-all duration-200;
+    background-color: var(--input-bg);
+    border-color: var(--glass-border);
+    color: var(--text-primary);
+}
+
+.input-field:focus {
+    background-color: var(--input-bg);
+    border-color: var(--accent-color);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+}
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+    background: #475569;
+}
+
+/* Animations */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+    animation: fadeIn 0.4s ease-out forwards;
+}
+
+.calculator-section {
+    display: none;
+    opacity: 0;
+    transition: opacity 0.3s ease-in-out;
+}
+
+.calculator-section.active {
+    display: block;
+    opacity: 1;
+}
+
+/* Toggle Switch */
+.theme-toggle-btn {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    color: var(--text-primary);
+}
+
+/* Text Colors for Dark Mode Compatibility */
+.text-dynamic {
+    color: var(--text-primary);
+}
+.text-dynamic-sec {
+    color: var(--text-secondary);
+}
+
+/* Specific component overrides */
+.btn-primary {
+    @apply px-6 py-3 rounded-xl font-bold text-lg transition duration-300 ease-in-out transform hover:scale-105 shadow-md flex items-center justify-center gap-2;
+}
+
+.course-card {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    transition: transform 0.2s;
+}
+.course-card:hover {
+    transform: translateY(-2px);
+}
+
+/* Loading Spinner */
+.loading-spinner {
+    border: 3px solid rgba(255,255,255,0.3);
+    border-radius: 50%;
+    border-top: 3px solid var(--accent-color);
+    width: 24px;
+    height: 24px;
+    animation: spin 1s linear infinite;
+}
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
