@@ -6,7 +6,7 @@ import { getGradePoint, getGradeOptions, getRegulationDetails } from '../utils/g
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Trash2, Plus, Download, Moon, Sun, Save, Info, Upload, FileDown, AlertTriangle } from 'lucide-react';
+import { Trash2, Plus, Download, Moon, Sun, Save, Info, Upload, FileDown, AlertTriangle, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import html2canvas from 'html2canvas';
 
@@ -446,7 +446,7 @@ export default function Calculator() {
             const formData = new FormData();
             formData.append('file', file);
 
-            const response = await fetch('/api/parse-grade-card', {
+            const response = await fetch('/api/extract-grades', {
                 method: 'POST',
                 body: formData,
             });
